@@ -1,7 +1,6 @@
 package com.moblong.iwe;
 
 import java.io.IOException;
-import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeoutException;
@@ -19,29 +18,18 @@ import com.rabbitmq.client.QueueingConsumer;
 import com.rabbitmq.client.QueueingConsumer.Delivery;
 import com.rabbitmq.client.ShutdownSignalException;
 
-public final class ImmediatelyWhistlerEngine implements IImmediatelyWhistlerEngine {
+public final class ImmediatelyWhistlerEngine {
 
 	private boolean alive = false;
 
-	private Set<IReciveListener> os;
+	private IReciveListener observer;
 	
 	private BlockingQueue<Whistle<?>> queue;
 
-	private IDetegater<Boolean> starter, closer; 
+	private IDetegater<IReciveListener> starter, closer; 
 	
 	private Thread reciver, sender;
-	
-	@Override
-	public void register(final IReciveListener listener) {
-		os.add(listener);
-	}
-	
-	@Override
-	public void unregister(final IReciveListener listener) {
-		os.remove(listener);
-	}
-	
-	@Override
+
 	public void send(final Whistle<?> whistle) {
 		try {
 			queue.put(whistle);
@@ -50,7 +38,6 @@ public final class ImmediatelyWhistlerEngine implements IImmediatelyWhistlerEngi
 		}
 	}
 	
-	@Override
 	public void init(final String id, final String host, final int port) throws IOException, TimeoutException {
 		ConnectionFactory factory = new ConnectionFactory();
 		factory.setAutomaticRecoveryEnabled(false);
@@ -79,13 +66,8 @@ public final class ImmediatelyWhistlerEngine implements IImmediatelyWhistlerEngi
 						byte[] body = delivery.getBody();
 						String msg = new String(body, "UTF-8");
 						Whistle<String> whistle = gson.fromJson(msg, new TypeToken<Whistle<String>>() {}.getType());
-						for(IReciveListener observer : os) {
-							if(whistle.isBroadcast()) {
-								//忽略监听器返回的结果，消息在所有的监听器传播完之前不被消费。
-								observer.recived(whistle);
-							} else if(observer.recived(whistle))
-								break;
-						}
+						if(observer != null)
+							observer.recived(whistle);
 						Thread.yield();
 					}
 					channel.close();
@@ -134,12 +116,14 @@ public final class ImmediatelyWhistlerEngine implements IImmediatelyWhistlerEngi
 			
 		});
 		
-		starter = new IDetegater<Boolean>() {
+		starter = new IDetegater<IReciveListener>() {
 
 			@Override
-			public void detegate(Boolean runnable) {
+			public void detegate(IReciveListener observer) {
 				
 				alive = true;
+				
+				ImmediatelyWhistlerEngine.this.observer = observer;
 				
 				if(reciver != null && !reciver.isAlive()) {
 					reciver.start();
@@ -148,18 +132,18 @@ public final class ImmediatelyWhistlerEngine implements IImmediatelyWhistlerEngi
 				if(sender != null && !sender.isAlive()) {
 					sender.start();
 				}
-				
-				runnable = reciver.isAlive() & sender.isAlive();
 			}
 			
 		};
 		
-		closer = new IDetegater<Boolean>() {
+		closer = new IDetegater<IReciveListener>() {
 
 			@Override
-			public void detegate(Boolean runnable) {
+			public void detegate(IReciveListener observer) {
 				
 				alive = false;
+				
+				ImmediatelyWhistlerEngine.this.observer = null;
 				
 				while(reciver != null && reciver.isAlive()) {
 					try {
@@ -177,25 +161,19 @@ public final class ImmediatelyWhistlerEngine implements IImmediatelyWhistlerEngi
 					}
 				}
 				
-				runnable = !(reciver.isAlive() & sender.isAlive());
 			}
 			
 		};
 	}
 	
-	@Override
-	public void startup() {
-		Boolean runnable = new Boolean(false);
-		starter.detegate(runnable);
+	public void startup(IReciveListener observer) {
+		starter.detegate(observer);
 	}
 	
-	@Override
 	public void shutdown() {
-		Boolean runnable = new Boolean(false);
-		closer.detegate(runnable);
+		closer.detegate(this.observer);
 	}
 	
-	@Override
 	public final boolean isAlive() {
 		return alive;
 	}
